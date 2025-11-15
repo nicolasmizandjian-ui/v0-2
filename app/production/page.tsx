@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useMemo, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { ClientsDialog } from "@/components/clients-dialog"
@@ -110,6 +110,31 @@ interface AssemblageTask {
   createdAt: Date
 }
 
+interface CuttingActionEventDetail {
+  client?: string
+  productsCount?: number
+  products?: Array<{
+    reference: string
+    quantity: number
+    unit: string
+  }>
+  rolls?: Array<{
+    rollReference: string
+    rollBatch: string
+    plannedQuantity: number
+    unit: string
+    sellsyRef?: string
+    laize?: string
+    metrage?: number
+  }>
+}
+
+const STORAGE_KEYS = {
+  confection: "confection-tasks",
+  cutting: "cutting-actions",
+  assemblage: "assemblage-tasks",
+} as const
+
 export default function ProductionPage() {
   const [showClientsDialog, setShowClientsDialog] = useState(false)
   const [showSuppliersDialog, setShowSuppliersDialog] = useState(false)
@@ -123,7 +148,7 @@ export default function ProductionPage() {
   const [assemblageTasks, setAssemblageTasks] = useState<AssemblageTask[]>([])
 
   useEffect(() => {
-    const savedTasks = localStorage.getItem("confection-tasks")
+    const savedTasks = localStorage.getItem(STORAGE_KEYS.confection)
     if (savedTasks) {
       try {
         const parsed = JSON.parse(savedTasks)
@@ -137,7 +162,7 @@ export default function ProductionPage() {
       }
     }
 
-    const savedActions = localStorage.getItem("cutting-actions")
+    const savedActions = localStorage.getItem(STORAGE_KEYS.cutting)
     if (savedActions) {
       try {
         const parsed = JSON.parse(savedActions)
@@ -151,7 +176,7 @@ export default function ProductionPage() {
       }
     }
 
-    const savedAssemblageTasks = localStorage.getItem("assemblage-tasks")
+    const savedAssemblageTasks = localStorage.getItem(STORAGE_KEYS.assemblage)
     if (savedAssemblageTasks) {
       try {
         const parsed = JSON.parse(savedAssemblageTasks)
@@ -165,46 +190,66 @@ export default function ProductionPage() {
       }
     }
 
-    const handleNewCuttingAction = (event: CustomEvent) => {
+    const handleNewCuttingAction: EventListener = (event) => {
+      if (!(event instanceof CustomEvent)) return
+
+      const detail = (event as CustomEvent<CuttingActionEventDetail>).detail
+      if (!detail || !detail.client) {
+        console.warn("[v0] Received cutting action without valid detail", detail)
+        return
+      }
+
+      const sanitizedClient = detail.client.trim()
+      if (!sanitizedClient) {
+        console.warn("[v0] Ignoring cutting action with empty client name")
+        return
+      }
+
+      const products = Array.isArray(detail.products) ? detail.products : []
+      const rolls = Array.isArray(detail.rolls) ? detail.rolls : []
+      const detailCount = Number(detail.productsCount)
+      const productsCount = Number.isFinite(detailCount) ? detailCount : products.length
+
       const newAction: CuttingAction = {
-        id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}-${event.detail.client.replace(/\s+/g, '-')}`,
-        client: event.detail.client,
-        productsCount: event.detail.productsCount,
-        products: event.detail.products || [],
-        rolls: event.detail.rolls || [],
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 11)}-${sanitizedClient.replace(/\s+/g, '-')}`,
+        client: sanitizedClient,
+        productsCount,
+        products,
+        rolls,
         createdAt: new Date(),
       }
+
       setCuttingActions((prev) => [...prev, newAction])
     }
 
-    window.addEventListener("cuttingActionStarted" as any, handleNewCuttingAction)
+    window.addEventListener("cuttingActionStarted", handleNewCuttingAction)
 
     return () => {
-      window.removeEventListener("cuttingActionStarted" as any, handleNewCuttingAction)
+      window.removeEventListener("cuttingActionStarted", handleNewCuttingAction)
     }
   }, [])
 
   useEffect(() => {
     if (confectionTasks.length > 0) {
-      localStorage.setItem("confection-tasks", JSON.stringify(confectionTasks))
+      localStorage.setItem(STORAGE_KEYS.confection, JSON.stringify(confectionTasks))
     } else {
-      localStorage.removeItem("confection-tasks")
+      localStorage.removeItem(STORAGE_KEYS.confection)
     }
   }, [confectionTasks])
 
   useEffect(() => {
     if (cuttingActions.length > 0) {
-      localStorage.setItem("cutting-actions", JSON.stringify(cuttingActions))
+      localStorage.setItem(STORAGE_KEYS.cutting, JSON.stringify(cuttingActions))
     } else {
-      localStorage.removeItem("cutting-actions")
+      localStorage.removeItem(STORAGE_KEYS.cutting)
     }
   }, [cuttingActions])
 
   useEffect(() => {
     if (assemblageTasks.length > 0) {
-      localStorage.setItem("assemblage-tasks", JSON.stringify(assemblageTasks))
+      localStorage.setItem(STORAGE_KEYS.assemblage, JSON.stringify(assemblageTasks))
     } else {
-      localStorage.removeItem("assemblage-tasks")
+      localStorage.removeItem(STORAGE_KEYS.assemblage)
     }
   }, [assemblageTasks])
 
@@ -322,23 +367,32 @@ export default function ProductionPage() {
     setAssemblageTasks((prev) => prev.filter((t) => t.id !== taskId))
   }
 
-  const productsInConfection = confectionTasks
-    .filter((task) => !task.isCompleted)
-    .reduce((total, task) => {
-      const taskTotal = task.products.reduce((sum, product) => {
-        const quantity = Number.parseFloat(product.realizedQuantity) || 0
-        return sum + quantity
+  const productsInConfection = useMemo(() => {
+    return confectionTasks
+      .filter((task) => !task.isCompleted)
+      .reduce((total, task) => {
+        const taskTotal = task.products.reduce((sum, product) => {
+          const quantity = Number.parseFloat(product.realizedQuantity) || 0
+          return sum + quantity
+        }, 0)
+        return total + taskTotal
       }, 0)
-      return total + taskTotal
-    }, 0)
+  }, [confectionTasks])
 
-  const productsInFabrication = cuttingActions.reduce((total, action) => {
-    if (!action.products || !Array.isArray(action.products)) {
-      return total
-    }
-    const actionTotal = action.products.reduce((sum, product) => sum + product.quantity, 0)
-    return total + actionTotal
-  }, 0)
+  const productsInFabrication = useMemo(() => {
+    return cuttingActions.reduce((total, action) => {
+      if (!action.products || !Array.isArray(action.products)) {
+        return total
+      }
+      const actionTotal = action.products.reduce((sum, product) => sum + product.quantity, 0)
+      return total + actionTotal
+    }, 0)
+  }, [cuttingActions])
+
+  const getElapsedMinutes = useCallback((createdAt: Date) => {
+    const diffInMinutes = Math.floor((Date.now() - createdAt.getTime()) / 60000)
+    return diffInMinutes
+  }, [])
 
   return (
     <div className="p-8">
@@ -443,84 +497,87 @@ export default function ProductionPage() {
           <section>
             <h2 className="mb-4 text-2xl font-bold text-foreground">Actions en cours</h2>
             <div className="space-y-4">
-              {cuttingActions.map((action) => (
-                <Card key={action.id} className="p-6 border-2 border-blue-200 bg-blue-50">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 mb-2">
-                        <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse" />
-                        <h3 className="text-lg font-bold text-blue-900">Découpe en cours</h3>
-                      </div>
-                      <div className="space-y-1 text-sm">
-                        <p className="text-blue-800">
-                          <span className="font-semibold">Client:</span> {action.client}
-                        </p>
-                        <p className="text-blue-800">
-                          <span className="font-semibold">Produits:</span> {action.productsCount} référence
-                          {action.productsCount > 1 ? "s" : ""}
-                        </p>
-                        {action.products && action.products.length > 0 && (
-                          <div className="mt-3 space-y-1.5">
-                            <p className="font-semibold text-blue-900">Détail des produits:</p>
-                            {action.products.map((product, index) => (
-                              <div
-                                key={index}
-                                className="bg-white rounded-md p-2 border border-blue-300 flex items-center justify-between"
-                              >
-                                <span className="text-xs font-medium text-blue-900">{product.reference}</span>
-                                <span className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
-                                  {product.quantity} {product.unit}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        {action.rolls && action.rolls.length > 0 && (
-                          <div className="mt-3 space-y-1.5">
-                            <p className="font-semibold text-blue-900">Détail des rouleaux:</p>
-                            {action.rolls.map((roll, index) => (
-                              <div
-                                key={index}
-                                className="bg-white rounded-md p-2 border border-blue-300 flex items-center justify-between"
-                              >
-                                <span className="text-xs font-medium text-blue-900">{roll.rollReference}</span>
-                                <span className="text-xs font-medium text-blue-900">Batch: {roll.rollBatch}</span>
-                                {roll.sellsyRef && (
-                                  <span className="text-xs font-medium text-blue-900">
-                                    Sellsy Ref: {roll.sellsyRef}
-                                  </span>
-                                )}
-                                {roll.laize && (
-                                  <span className="text-xs font-medium text-blue-900">Laize: {roll.laize}</span>
-                                )}
-                                {roll.metrage !== undefined && (
+              {cuttingActions.map((action) => {
+                const elapsedMinutes = getElapsedMinutes(action.createdAt)
+
+                return (
+                  <Card key={action.id} className="p-6 border-2 border-blue-200 bg-blue-50">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-2 h-2 bg-blue-600 rounded-full animate-pulse" />
+                          <h3 className="text-lg font-bold text-blue-900">Découpe en cours</h3>
+                        </div>
+                        <div className="space-y-1 text-sm">
+                          <p className="text-blue-800">
+                            <span className="font-semibold">Client:</span> {action.client}
+                          </p>
+                          <p className="text-blue-800">
+                            <span className="font-semibold">Produits:</span> {action.productsCount} référence
+                            {action.productsCount > 1 ? "s" : ""}
+                          </p>
+                          {action.products && action.products.length > 0 && (
+                            <div className="mt-3 space-y-1.5">
+                              <p className="font-semibold text-blue-900">Détail des produits:</p>
+                              {action.products.map((product, index) => (
+                                <div
+                                  key={index}
+                                  className="bg-white rounded-md p-2 border border-blue-300 flex items-center justify-between"
+                                >
+                                  <span className="text-xs font-medium text-blue-900">{product.reference}</span>
                                   <span className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
-                                    {roll.metrage} m
+                                    {product.quantity} {product.unit}
                                   </span>
-                                )}
-                                <span className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
-                                  {roll.plannedQuantity} {roll.unit}
-                                </span>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                        <p className="text-blue-700 text-xs mt-2">
-                          Démarrée il y a {Math.floor((Date.now() - action.createdAt.getTime()) / 60000)} minute
-                          {Math.floor((Date.now() - action.createdAt.getTime()) / 60000) !== 1 ? "s" : ""}
-                        </p>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          {action.rolls && action.rolls.length > 0 && (
+                            <div className="mt-3 space-y-1.5">
+                              <p className="font-semibold text-blue-900">Détail des rouleaux:</p>
+                              {action.rolls.map((roll, index) => (
+                                <div
+                                  key={index}
+                                  className="bg-white rounded-md p-2 border border-blue-300 flex items-center justify-between"
+                                >
+                                  <span className="text-xs font-medium text-blue-900">{roll.rollReference}</span>
+                                  <span className="text-xs font-medium text-blue-900">Batch: {roll.rollBatch}</span>
+                                  {roll.sellsyRef && (
+                                    <span className="text-xs font-medium text-blue-900">
+                                      Sellsy Ref: {roll.sellsyRef}
+                                    </span>
+                                  )}
+                                  {roll.laize && (
+                                    <span className="text-xs font-medium text-blue-900">Laize: {roll.laize}</span>
+                                  )}
+                                  {roll.metrage !== undefined && (
+                                    <span className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                                      {roll.metrage} m
+                                    </span>
+                                  )}
+                                  <span className="text-xs font-bold text-blue-700 bg-blue-100 px-2 py-0.5 rounded-full">
+                                    {roll.plannedQuantity} {roll.unit}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          <p className="text-blue-700 text-xs mt-2">
+                            Démarrée il y a {elapsedMinutes} minute{elapsedMinutes !== 1 ? "s" : ""}
+                          </p>
+                        </div>
                       </div>
+                      <Button
+                        onClick={() => handleCompleteCuttingAction(action)}
+                        className="bg-green-600 hover:bg-green-700 text-white gap-2"
+                      >
+                        <Check className="h-4 w-4" />
+                        Découpe Terminée
+                      </Button>
                     </div>
-                    <Button
-                      onClick={() => handleCompleteCuttingAction(action)}
-                      className="bg-green-600 hover:bg-green-700 text-white gap-2"
-                    >
-                      <Check className="h-4 w-4" />
-                      Découpe Terminée
-                    </Button>
-                  </div>
-                </Card>
-              ))}
+                  </Card>
+                )
+              })}
             </div>
           </section>
         )}
