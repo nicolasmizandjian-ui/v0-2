@@ -9,12 +9,36 @@ interface ChartData {
   valeur: number
 }
 
-export function ProductionChart() {
+interface ProductionChartProps {
+  metrics?: {
+    production: {
+      commandesAFaire: number
+      commandesDecoupeEnCours: number
+      commandesConfection: number
+      commandesAssemblage: number
+      commandesAExpedier: number
+    }
+  }
+}
+
+export function ProductionChart({ metrics }: ProductionChartProps) {
   const [data, setData] = useState<ChartData[]>([])
 
   useEffect(() => {
-    fetchData()
-  }, [])
+    if (metrics) {
+      const chartData = [
+        { name: "À faire", valeur: metrics.production.commandesAFaire || 0 },
+        { name: "Découpe", valeur: metrics.production.commandesDecoupeEnCours || 0 },
+        { name: "Confection", valeur: metrics.production.commandesConfection || 0 },
+        { name: "Assemblage", valeur: metrics.production.commandesAssemblage || 0 },
+        { name: "À expédier", valeur: metrics.production.commandesAExpedier || 0 },
+      ]
+      setData(chartData)
+    } else {
+      // Fallback: fetch if no metrics provided
+      fetchData()
+    }
+  }, [metrics])
 
   async function fetchData() {
     try {

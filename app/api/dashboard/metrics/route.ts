@@ -12,8 +12,11 @@ export async function GET() {
       process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
       {
         cookies: {
-          get(name: string) {
-            return cookieStore.get(name)?.value
+          getAll: () => cookieStore.getAll(),
+          setAll: (cookiesToSet) => {
+            cookiesToSet.forEach(({ name, value, options }) =>
+              cookieStore.set(name, value, options)
+            )
           },
         },
       }
@@ -21,10 +24,9 @@ export async function GET() {
 
     console.log("[v0] Fetching atelier data...")
     
-    // Récupérer les données d'atelier
     const { data: atelierData, error: atelierError } = await supabase
       .from("atelier_monday")
-      .select("*")
+      .select("id, statut, temps_decoupe_minutes, temps_confection_minutes, temps_assemblage_minutes")
 
     if (atelierError) {
       console.error("[v0] Error fetching atelier data:", atelierError)
@@ -51,7 +53,6 @@ export async function GET() {
 
     console.log("[v0] Fetching stock data...")
 
-    // Récupérer le stock
     const { data: stockMatieres } = await supabase
       .from("stock_monday_matieres")
       .select("quantite, prix_unitaire_ht")
@@ -80,7 +81,7 @@ export async function GET() {
 
     const { data: mouvements } = await supabase
       .from("historique_mouvements_atelier")
-      .select("*")
+      .select("id_atelier, type_mouvement, date_mouvement")
       .gte("date_mouvement", sevenDaysAgo.toISOString())
 
     const produitsTraites7j = new Set(
@@ -89,24 +90,23 @@ export async function GET() {
         .map((m: any) => m.id_atelier)
     ).size
 
-    // Calcul du temps moyen par étape
-    const tempsMoyenDecoupe =
-      metricsData
-        .filter((item: any) => item.temps_decoupe_minutes)
-        .reduce((sum: number, item: any) => sum + item.temps_decoupe_minutes, 0) /
-      metricsData.filter((item: any) => item.temps_decoupe_minutes).length || 0
+    const tempsDecoupeFiltered = metricsData.filter((item: any) => item.temps_decoupe_minutes)
+    const countDecoupe = tempsDecoupeFiltered.length
+    const tempsMoyenDecoupe = countDecoupe > 0
+      ? tempsDecoupeFiltered.reduce((sum: number, item: any) => sum + item.temps_decoupe_minutes, 0) / countDecoupe
+      : 0
 
-    const tempsMoyenConfection =
-      metricsData
-        .filter((item: any) => item.temps_confection_minutes)
-        .reduce((sum: number, item: any) => sum + item.temps_confection_minutes, 0) /
-      metricsData.filter((item: any) => item.temps_confection_minutes).length || 0
+    const tempsConfectionFiltered = metricsData.filter((item: any) => item.temps_confection_minutes)
+    const countConfection = tempsConfectionFiltered.length
+    const tempsMoyenConfection = countConfection > 0
+      ? tempsConfectionFiltered.reduce((sum: number, item: any) => sum + item.temps_confection_minutes, 0) / countConfection
+      : 0
 
-    const tempsMoyenAssemblage =
-      metricsData
-        .filter((item: any) => item.temps_assemblage_minutes)
-        .reduce((sum: number, item: any) => sum + item.temps_assemblage_minutes, 0) /
-      metricsData.filter((item: any) => item.temps_assemblage_minutes).length || 0
+    const tempsAssemblageFiltered = metricsData.filter((item: any) => item.temps_assemblage_minutes)
+    const countAssemblage = tempsAssemblageFiltered.length
+    const tempsMoyenAssemblage = countAssemblage > 0
+      ? tempsAssemblageFiltered.reduce((sum: number, item: any) => sum + item.temps_assemblage_minutes, 0) / countAssemblage
+      : 0
 
     console.log("[v0] Metrics calculation complete")
 
