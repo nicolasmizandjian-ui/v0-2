@@ -1,0 +1,8 @@
+node_modules/
+.next/
+.DS_Store
+.env
+pnpm-debug.log*
+
+# VSCode
+.vscode/
